@@ -41,7 +41,7 @@ if ! command -v bpftool >/dev/null 2>&1; then
 fi
 
 if [[ ! -x $BIN ]]; then
-    echo "build/auditor is required. Compile or set BIN="; exit 1
+    echo "$BIN is required. Compile or set BIN="; exit 1
 fi
 
 if ! mountpoint -q "$PIN"; then
@@ -91,7 +91,7 @@ rm -f "$ERR"
 # however this tool operates on exact match
 # thus it should be allowed
 mkdir -p "$CG/sub"
-if sh -c "echo \$\$ > $CG/sub/cgroup.procs; exec bpftool map create $PIN/sub1 type hash key 4 value 4 entries 8 name sub1" 2>/dev/null; then
+if sh -c "echo \$\$ > $CG/sub/cgroup.procs && exec bpftool map create $PIN/sub1 type hash key 4 value 4 entries 8 name sub1" 2>/dev/null; then
     pass "child cgroup allowed"
 else
     fail "child cgroup blocked"
@@ -105,7 +105,7 @@ for i in {0..7}; do
 done
 bpftool map delete name denied_cgroups key hex $KEY || fail "could not delete cgroup from denylist"
 
-if sh -c "echo \$\$ > $CG/cgroup.procs; exec bpftool map create $PIN/dn2 type hash key 4 value 4 entries 8 name dn2" 2>/dev/null; then
+if sh -c "echo \$\$ > $CG/cgroup.procs && exec bpftool map create $PIN/dn2 type hash key 4 value 4 entries 8 name dn2" 2>/dev/null; then
     pass "allowed again after removal from denylist"
 else
     fail "still blocked after removal"
