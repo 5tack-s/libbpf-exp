@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
-/* Copyright (c) 2020 Facebook */
-
-//https://github.com/libbpf/libbpf-bootstrap
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
