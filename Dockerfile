@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
-RUN cmake -S . -B build
+RUN cmake -S . -B build -DCOMPILE_STATIC=ON
 RUN cmake --build build
 
 FROM scratch AS artifact
