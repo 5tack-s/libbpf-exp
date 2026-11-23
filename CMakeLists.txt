@@ -87,6 +87,8 @@ else()
     file(APPEND ${INCLUDE}/vmlinux.h "};\n")
 endif()
 
+add_custom_target(vmlinux DEPENDS ${INCLUDE}/vmlinux.h)
+
 foreach(NAME IN LISTS BPF_NAMES)
     set(SRC_FILE ${BPF_SRC}/${NAME}.bpf.c)
     set(OBJ ${GEN}/${NAME}.bpf.o)
