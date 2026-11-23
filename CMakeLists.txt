@@ -23,7 +23,7 @@ set(BPF_CFLAGS -g -O2 -target bpf -D__TARGET_ARCH_${BPF_ARCH})
 option(COMPILE_STATIC "Compile bpf statically" OFF)
 option(GENERATE_VMLINUX "Generate vmlinux.h via bpftool at build time" ON)
 
-# Source tree layout (refactored):
+# Source tree layout:
 #   src/userspace/  - userspace C libraries + main entry (police, auditor, socket, main)
 #   src/bpf/        - BPF programs (police.bpf.c, auditor.bpf.c) and their headers
 #   include/        - public headers + generated vmlinux.h + skeletons
@@ -52,44 +52,39 @@ file(MAKE_DIRECTORY ${GEN})
 # This requires root and a BTF-enabled kernel. If unavailable, falls back to
 # a minimal vmlinux.h with the structs needed by the BPF programs.
 if(GENERATE_VMLINUX AND BPFTOOL)
-    add_custom_command(
-        OUTPUT ${INCLUDE}/vmlinux.h
-        COMMAND ${CMAKE_COMMAND} -E echo "Generating vmlinux.h via bpftool (requires root/BTF)..."
-        COMMAND ${BPFTOOL} btf dump file /sys/kernel/btf/vmlinux format c > ${INCLUDE}/vmlinux.h 2>/dev/null || \
-                  ${CMAKE_COMMAND} -E echo "/* Minimal vmlinux.h fallback */" > ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "struct file {" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    struct inode *f_inode;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "};" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "struct inode {" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    umode_t i_mode;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    unsigned long i_ino;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "};" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "struct mm_struct {" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    struct file *exe_file;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "};" >> ${INCLUDE}/vmlinux.h
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        VERBATIM
+    execute_process(
+        COMMAND ${BPFTOOL} btf dump file /sys/kernel/btf/vmlinux format c
+        OUTPUT_FILE ${INCLUDE}/vmlinux.h
+        ERROR_QUIET
+        RESULT_VARIABLE vmlinux_gen_result
     )
-    add_custom_target(vmlinux DEPENDS ${INCLUDE}/vmlinux.h)
+    if(NOT vmlinux_gen_result EQUAL 0 OR NOT EXISTS ${INCLUDE}/vmlinux.h)
+        message(STATUS "bpftool vmlinux dump failed, generating fallback vmlinux.h")
+        file(WRITE ${INCLUDE}/vmlinux.h "/* Minimal vmlinux.h fallback */\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "struct file {\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "    struct inode *f_inode;\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "};\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "struct inode {\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "    umode_t i_mode;\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "    unsigned long i_ino;\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "};\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "struct mm_struct {\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "    struct file *exe_file;\n")
+        file(APPEND ${INCLUDE}/vmlinux.h "};\n")
+    endif()
 else()
     message(STATUS "Skipping vmlinux.h generation (bpftool not found or GENERATE_VMLINUX=OFF)")
-    add_custom_command(
-        OUTPUT ${INCLUDE}/vmlinux.h
-        COMMAND ${CMAKE_COMMAND} -E echo "/* Minimal vmlinux.h fallback */" > ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "struct file {" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    struct inode *f_inode;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "};" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "struct inode {" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    umode_t i_mode;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    unsigned long i_ino;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "};" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "struct mm_struct {" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "    struct file *exe_file;" >> ${INCLUDE}/vmlinux.h && \
-                  ${CMAKE_COMMAND} -E echo "};" >> ${INCLUDE}/vmlinux.h
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        VERBATIM
-    )
-    add_custom_target(vmlinux DEPENDS ${INCLUDE}/vmlinux.h)
+    file(WRITE ${INCLUDE}/vmlinux.h "/* Minimal vmlinux.h fallback */\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "struct file {\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "    struct inode *f_inode;\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "};\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "struct inode {\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "    umode_t i_mode;\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "    unsigned long i_ino;\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "};\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "struct mm_struct {\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "    struct file *exe_file;\n")
+    file(APPEND ${INCLUDE}/vmlinux.h "};\n")
 endif()
 
 foreach(NAME IN LISTS BPF_NAMES)
@@ -107,7 +102,7 @@ foreach(NAME IN LISTS BPF_NAMES)
     add_custom_command(
         OUTPUT ${SKEL}
         DEPENDS ${OBJ}
-        COMMAND sh -c "${BPFTOOL} gen skeleton ${OBJ} > ${SKEL} 2>/dev/null || true"
+        COMMAND ${BPFTOOL} gen skeleton ${OBJ} > ${SKEL} 2>/dev/null || true
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         VERBATIM
     )
