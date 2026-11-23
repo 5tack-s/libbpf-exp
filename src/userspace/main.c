@@ -116,6 +116,26 @@ static int handle_monitor_cmd(struct police *p, struct monitor *mon,
             fprintf(stderr, "[INFO] allowed path %s via web command\n", cmd->path);
         }
         break;
+    case MONITOR_CMD_DENY_PID:
+        err = police_deny_pid(p, cmd->pid);
+        if (err) {
+            success = 0;
+            snprintf(msg_buf, sizeof(msg_buf), "deny_pid failed: %s", strerror(-err));
+            msg = msg_buf;
+        } else {
+            fprintf(stderr, "[INFO] denied pid %u via web command\n", cmd->pid);
+        }
+        break;
+    case MONITOR_CMD_ALLOW_PID:
+        err = police_allow_pid(p, cmd->pid);
+        if (err) {
+            success = 0;
+            snprintf(msg_buf, sizeof(msg_buf), "allow_pid failed: %s", strerror(-err));
+            msg = msg_buf;
+        } else {
+            fprintf(stderr, "[INFO] allowed pid %u via web command\n", cmd->pid);
+        }
+        break;
     case MONITOR_CMD_SET_AUDIT_ONLY:
         err = police_set_audit_only(p, cmd->enabled);
         if (err) {
@@ -138,6 +158,8 @@ static int handle_monitor_cmd(struct police *p, struct monitor *mon,
                          cmd->action == MONITOR_CMD_ALLOW_INODE  ? "allow_inode" :
                          cmd->action == MONITOR_CMD_DENY_PATH    ? "deny_path" :
                          cmd->action == MONITOR_CMD_ALLOW_PATH   ? "allow_path" :
+                         cmd->action == MONITOR_CMD_DENY_PID     ? "deny_pid" :
+                         cmd->action == MONITOR_CMD_ALLOW_PID    ? "allow_pid" :
                          cmd->action == MONITOR_CMD_SET_AUDIT_ONLY ? "set_audit_only" :
                                                                    "unknown",
                          success, msg);

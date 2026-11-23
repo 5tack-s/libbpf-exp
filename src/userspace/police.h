@@ -21,6 +21,11 @@ int police_allow_path(struct police *p, const char *cgroup_path);
 int police_deny_inode(struct police *p, uint64_t inode);
 int police_allow_inode(struct police *p, uint64_t inode);
 
+/* Deny/allow an individual PID. This works without writing to cgroup.procs,
+ * so it is reliable under WSL2 where cgroup.procs writes can fail with EBUSY. */
+int police_deny_pid(struct police *p, uint32_t pid);
+int police_allow_pid(struct police *p, uint32_t pid);
+
 /* Recursively deny a cgroup and every descendant cgroup directory.
  * Provides subtree inheritance so child cgroups cannot escape policing. */
 int police_deny_subtree(struct police *p, const char *cgroup_path);

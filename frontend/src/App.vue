@@ -207,6 +207,63 @@ const fetchDenied = async () => {
   }
 }
 
+const denyPid = async () => {
+  const pid = Number(pidDenyValue.value.trim())
+  if (!pid || !Number.isInteger(pid) || pid <= 0) {
+    pidDenyResult.value = { ok: false, status: 400, message: "PID must be a positive integer", sent: null }
+    return
+  }
+
+  pidDenySubmitting.value = true
+  pidDenyResult.value = null
+  try {
+    const resp = await fetch(`${API_URL}/v1/pid/deny`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pid }),
+    })
+    const body = await resp.json()
+    const ok = resp.ok && body.status !== "error"
+    pidDenyResult.value = {
+      ok,
+      status: resp.status,
+      message: body.message || (ok ? "PID denied" : "Failed to deny PID"),
+      sent: { pid },
+    }
+    if (ok) {
+      pidDenyValue.value = ""
+    }
+  } catch (err) {
+    pidDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
+  } finally {
+    pidDenySubmitting.value = false
+  }
+}
+
+const allowPid = async (pid) => {
+  pidDenySubmitting.value = true
+  pidDenyResult.value = null
+  try {
+    const resp = await fetch(`${API_URL}/v1/pid/allow`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pid }),
+    })
+    const body = await resp.json()
+    const ok = resp.ok && body.status !== "error"
+    pidDenyResult.value = {
+      ok,
+      status: resp.status,
+      message: body.message || (ok ? "PID allowed" : "Failed to allow PID"),
+      sent: { pid },
+    }
+  } catch (err) {
+    pidDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
+  } finally {
+    pidDenySubmitting.value = false
+  }
+}
+
 const connectWebSocket = () => {
   if (connecting.value) {
     return
@@ -540,6 +597,44 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- PID deny/allow: block individual PIDs via BPF denied_pids map -->
+    <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir PID (BPF)</span>
+        <span class="text-xs text-slate-500">sem cgroup.procs</span>
+      </div>
+      <form @submit.prevent="denyPid" class="flex flex-col sm:flex-row gap-4 items-end">
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400">PID</label>
+          <input
+            v-model="pidDenyValue"
+            type="text"
+            inputmode="numeric"
+            placeholder="PID do processo"
+            class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            @keyup.enter="denyPid"
+          />
+        </div>
+        <button
+          type="submit"
+          :disabled="pidDenySubmitting"
+          class="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
+        >
+          {{ pidDenySubmitting ? 'Enviando...' : 'Negar PID' }}
+        </button>
+      </form>
+
+      <!-- PID deny/allow result -->
+      <div v-if="pidDenyResult" class="mt-3 p-3 rounded text-sm font-mono"
+           :class="pidDenyResult.ok ? 'bg-green-900/20 border border-green-700 text-green-300' : 'bg-red-900/20 border border-red-700 text-red-300'">
+        <div class="flex justify-between mb-1">
+          <span>{{ pidDenyResult.sent ? JSON.stringify(pidDenyResult.sent) : '—' }}</span>
+          <span @click="pidDenyResult = null" class="cursor-pointer hover:underline">×</span>
+        </div>
+        <div>{{ pidDenyResult.message }}</div>
+      </div>
+    </div>
+
     <!-- Denied cgroup paths: currently denied paths and their resolved inodes -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center justify-between gap-2 mb-3">
@@ -579,44 +674,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- PID deny/allow panel: deny or allow individual PIDs.
-         Works without writing to cgroup.procs (broken under WSL2). -->
-    <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
-      <div class="flex items-center gap-2 mb-3">
-        <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir PID (BPF)</span>
-        <span class="text-xs text-slate-500">sem cgroup.procs</span>
-      </div>
-      <form @submit.prevent="denyPid" class="flex flex-col sm:flex-row gap-4 items-end">
-        <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-400">PID</label>
-          <input
-            v-model="pidDenyValue"
-            type="text"
-            inputmode="numeric"
-            placeholder="PID do processo"
-            class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-            @keyup.enter="denyPid"
-          />
-        </div>
-        <button
-          type="submit"
-          :disabled="pidDenySubmitting"
-          class="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
-        >
-          {{ pidDenySubmitting ? 'Enviando...' : 'Negar PID' }}
-        </button>
-      </form>
-
-      <!-- PID deny/allow result -->
-      <div v-if="pidDenyResult" class="mt-3 p-3 rounded text-sm font-mono"
-           :class="pidDenyResult.ok ? 'bg-green-900/20 border border-green-700 text-green-300' : 'bg-red-900/20 border border-red-700 text-red-300'">
-        <div class="flex justify-between mb-1">
-          <span>{{ pidDenyResult.sent ? JSON.stringify(pidDenyResult.sent) : '—' }}</span>
-          <span @click="pidDenyResult = null" class="cursor-pointer hover:underline">×</span>
-        </div>
-        <div>{{ pidDenyResult.message }}</div>
-      </div>
-    </div>
 
     <!-- cgroup.procs: PIDs currently inside the denied cgroup (read only) -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
