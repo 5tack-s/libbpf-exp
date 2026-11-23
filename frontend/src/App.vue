@@ -172,6 +172,33 @@ const denyPath = async () => {
   }
 }
 
+const allowPath = async (path) => {
+  pathDenySubmitting.value = true
+  pathDenyResult.value = null
+  try {
+    const resp = await fetch(`${API_URL}/v1/path/allow`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    })
+    const body = await resp.json()
+    const ok = resp.ok && body.status !== "error"
+    pathDenyResult.value = {
+      ok,
+      status: resp.status,
+      message: body.message || (ok ? "Caminho permitido" : "Falha ao permitir caminho"),
+      sent: { path },
+    }
+    if (ok) {
+      await fetchDenied()
+    }
+  } catch (err) {
+    pathDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
+  } finally {
+    pathDenySubmitting.value = false
+  }
+}
+
 const denyPid = async () => {
   const pid = pidDenyValue.value.trim()
   if (!pid) {
@@ -635,12 +662,20 @@ onUnmounted(() => {
               (inode {{ entry.inode }})
             </span>
           </div>
+          <button
+            @click="allowPath(entry.path)"
+            class="text-xs text-green-400 hover:text-green-300 underline"
+            :title="`Permitir ${entry.path}`"
+          >
+            Permitir
+          </button>
         </div>
       </div>
       <div class="mt-2 text-[10px] text-slate-500">
         Cada linha mostra um caminho de cgroup negado. O inode é resolvido
         automaticamente pelo servidor (o BPF nega com base no número do
-        inode, não no caminho). Remova da lista para permitir novamente.
+        inode, não no caminho). Clique em "Permitir" para remover da lista
+        de negação.
       </div>
     </div>
 
