@@ -1,0 +1,58 @@
+# libbpf-exp full stack — docker-compose
+#
+# Services:
+#   auditor    - eBPF auditor (built from this repo, runs privileged)
+#   middleman  - FastAPI WebSocket bridge
+#   frontend   - Vue 3 frontend (served by nginx)
+#
+# Usage:
+#   docker compose up --build
+#
+# Notes:
+#   The auditor needs privileged mode and access to /sys/fs/bpf, /sys/fs/cgroup
+#   and /sys/kernel/btf. The middleman and auditor share a UNIX socket volume
+#   at /tmp/libbpf-exp.sock.
+
+services:
+  auditor:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: libbpf-exp/auditor:latest
+    container_name: libbpf-exp-auditor
+    privileged: true
+    network_mode: host
+    volumes:
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /sys/fs/cgroup:/sys/fs/cgroup
+      - /sys/kernel/btf:/sys/kernel/btf
+      - monitor-sock:/tmp
+    command: ["/app/build/auditor", "/sys/fs/cgroup/denied"]
+    depends_on:
+      - middleman
+
+  middleman:
+    build:
+      context: ..
+      dockerfile: middleman/Dockerfile
+    image: libbpf-exp/middleman:latest
+    container_name: libbpf-exp-middleman
+    network_mode: host
+    volumes:
+      - monitor-sock:/tmp
+    ports:
+      - "8000:8000"
+
+  frontend:
+    image: nginx:alpine
+    container_name: libbpf-exp-frontend
+    network_mode: host
+    ports:
+      - "5173:80"
+    volumes:
+      - ../frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - middleman
+
+volumes:
+  monitor-sock:
