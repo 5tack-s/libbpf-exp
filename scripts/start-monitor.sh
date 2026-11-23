@@ -52,14 +52,15 @@ mkdir -p "$CGROUP_PATH"
 echo 0 > "$CGROUP_PATH/cgroup.procs" 2>/dev/null || true
 
 # --- Start FastAPI middleman ----------------------------------------------
-echo "[monitor] Installing Python dependencies..."
-python3 -m pip install -q -r "$MIDDLEMAN_DIR/requirements.txt" 2>/dev/null || {
-    echo "WARNING: pip install failed; trying system packages..."
-}
+echo "[monitor] Setting up Python virtualenv in $MIDDLEMAN_DIR/.venv..."
+if [[ ! -d "$MIDDLEMAN_DIR/.venv" ]]; then
+    python3 -m venv "$MIDDLEMAN_DIR/.venv"
+fi
+"$MIDDLEMAN_DIR/.venv/bin/pip" install -q -r "$MIDDLEMAN_DIR/requirements.txt"
 
 echo "[monitor] Starting FastAPI middleman on :8000..."
 cd "$MIDDLEMAN_DIR"
-python3 main.py &
+"$MIDDLEMAN_DIR/.venv/bin/python" main.py &
 MIDDLEMAN_PID=$!
 cd "$PROJECT_DIR"
 
