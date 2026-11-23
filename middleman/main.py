@@ -536,10 +536,8 @@ async def command(req: CommandRequest):
                 denied_cgroups.append(entry)
             _persist_denied()
     elif action == "allow_path" and req.path:
-        async with denied_lock:
-            # Remove any entry matching this path (with or without inode).
-            denied_cgroups[:] = [e for e in denied_cgroups if e.get("path") != req.path]
-            _persist_denied()
+        # Deny-only: allow_path is not supported via the HTTP API.
+        return {"status": "error", "message": "allow_path is not supported (deny-only)"}
     elif action in ("deny_inode", "allow_inode"):
         # Raw inode commands are not exposed over the HTTP API. Users work
         # with paths; the server resolves them to inodes internally.
@@ -719,47 +717,6 @@ async def path_deny(req: PathRequest):
     await broadcast(json.dumps({
         "type": "CMD_SENT",
         "action": "deny_path",
-        "payload": payload,
-    }))
-    return {"status": "ok", "sent": text}
-
-
-@app.post("/v1/path/allow")
-async def path_allow(req: PathRequest):
-    """Allow an executable path by removing its inode from the BPF
-    denied_paths map."""
-    path = req.path
-    if not path:
-        return {"status": "error", "message": "Path is required"}
-
-    try:
-        st = os.stat(path)
-    except OSError as exc:
-        return {"status": "error", "message": f"Failed to stat {path}: {exc}"}
-
-    inode = st.st_ino
-    payload = {"action": "allow_path", "inode": inode, "path": path}
-    text = json.dumps(payload)
-
-    with auditor_conn_lock:
-        conn = auditor_conn[0]
-
-    if conn is None:
-        return {"status": "error", "message": "auditor not connected"}
-
-    try:
-        conn.sendall((text + "\n").encode("utf-8"))
-    except (OSError, BrokenPipeError, ConnectionError) as exc:
-        return {"status": "error", "message": str(exc)}
-
-    # Remove the allowed path from the local deny list.
-    async with denied_lock:
-        denied_cgroups[:] = [e for e in denied_cgroups if e.get("path") != path]
-        _persist_denied()
-
-    await broadcast(json.dumps({
-        "type": "CMD_SENT",
-        "action": "allow_path",
         "payload": payload,
     }))
     return {"status": "ok", "sent": text}

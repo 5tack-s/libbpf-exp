@@ -72,34 +72,11 @@ const clearCmdResult = () => {
   cmdResult.value = null
 }
 
-const allowPath = async (path) => {
-  cmdSubmitting.value = true
+const clearCmdResult = () => {
   cmdResult.value = null
-  try {
-    const resp = await fetch(`${API_URL}/v1/command`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "allow_path", path }),
-    })
-    const body = await resp.json()
-    const ok = resp.ok && body.status !== "error"
-    cmdResult.value = {
-      ok,
-      status: resp.status,
-      message: body.message || (ok ? "Caminho permitido" : "Falha ao permitir caminho"),
-      sent: { action: "allow_path", path },
-    }
-    if (ok) {
-      await fetchDenied()
-    }
-  } catch (err) {
-    cmdResult.value = { ok: false, status: 0, message: err.message, sent: null }
-  } finally {
-    cmdSubmitting.value = false
-  }
 }
 
-// Path deny/allow: block individual executable paths via BPF denied_paths map.
+// Path deny: block individual executable paths via BPF denied_paths map.
 // The server stats the path and keys the denied_paths map on st_ino.
 // The BPF hook reads the caller's executable inode via
 // current->mm->exe_file->f_inode->i_ino and checks it against this map.
@@ -112,9 +89,6 @@ const pathDenyResult = ref(null) // { ok, status, message, sent }
 const pidDenyValue = ref("")
 const pidDenySubmitting = ref(false)
 const pidDenyResult = ref(null) // { ok, status, message, sent }
-const pidAllowValue = ref("")
-const pidAllowSubmitting = ref(false)
-const pidAllowResult = ref(null) // { ok, status, message, sent }
 
 // Currently denied cgroup paths (fetched from the middleman).
 const deniedCgroups = ref([]) // [{ path, inode? }]
@@ -130,7 +104,7 @@ const deniedPathsLoading = ref(false)
 
 // cgroup.procs contents (PIDs inside the denied cgroup) — read only.
 // No write/remove here because cgroup.procs writes can fail with EBUSY
-// under WSL2. Use the "Negar/permitir PID (BPF)" panel instead to block
+// under WSL2. Use the "Negar PID (cgroup.procs)" panel instead to block
 // or unblock PIDs via the BPF denied_pids map.
 const cgProcsCgroup = ref(DEFAULT_CGROUP_PATH)
 const cgProcsPids = ref([]) // [number]
@@ -283,41 +257,6 @@ const denyPid = async () => {
     pidDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
   } finally {
     pidDenySubmitting.value = false
-  }
-}
-
-const allowPid = async () => {
-  const pid = pidAllowValue.value.trim()
-  if (!pid) {
-    pidAllowResult.value = { ok: false, status: 400, message: "PID é obrigatório", sent: null }
-    return
-  }
-
-  pidAllowSubmitting.value = true
-  pidAllowResult.value = null
-  try {
-    const resp = await fetch(`${API_URL}/v1/cgroup/remove`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid: Number(pid), cgroup_path: DEFAULT_CGROUP_PATH }),
-    })
-    const body = await resp.json()
-    const ok = resp.ok && body.status !== "error"
-    pidAllowResult.value = {
-      ok,
-      status: resp.status,
-      message: body.message || (ok ? "PID removido do cgroup negado" : "Falha ao permitir PID"),
-      sent: { pid },
-    }
-    if (ok) {
-      pidAllowValue.value = ""
-      await fetchDenied()
-      await fetchCgroupProcs()
-    }
-  } catch (err) {
-    pidAllowResult.value = { ok: false, status: 0, message: err.message, sent: null }
-  } finally {
-    pidAllowSubmitting.value = false
   }
 }
 
@@ -608,38 +547,36 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Command panel: deny/allow path via the middleman -->
+    <!-- Command panel: deny executable path via the middleman -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center gap-2 mb-3">
-        <span class="text-xs font-bold text-slate-400 uppercase">Policiamento via Web</span>
+        <span class="text-xs font-bold text-slate-400 uppercase">Negar caminho de executável (BPF)</span>
+        <span class="text-xs text-slate-500">bloqueia esse executável de fazer bpf()</span>
       </div>
-      <form @submit.prevent="sendCommand" class="flex flex-col sm:flex-row gap-4 items-end">
+      <form @submit.prevent="denyPath" class="flex flex-col sm:flex-row gap-4 items-end">
         <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-400">Ação</label>
-          <select
-            v-model="cmdAction"
-            class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-          >
-            <option value="deny_path">Negar caminho</option>
-            <option value="allow_path">Permitir caminho</option>
-          </select>
-        </div>
-        <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-400">Valor</label>
+          <label class="text-xs text-slate-400">Caminho do executável</label>
           <input
             v-model="cmdValue"
             type="text"
-            placeholder="Caminho do cgroup (ex: /sys/fs/cgroup/denied)"
+            placeholder="Caminho do executável (ex: /usr/bin/bpftool)"
             class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-            @keyup.enter="sendCommand"
+            @keyup.enter="denyPath"
           />
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500">
+            Bloqueia este executável específico de chamar bpf(). Coloque o caminho
+            do programa que quer bloquear (ex: /usr/bin/bpftool), não o interpretador
+            que o executa.
+          </span>
         </div>
         <button
           type="submit"
           :disabled="cmdSubmitting"
-          class="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
+          class="bg-red-600 hover:bg-red-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
         >
-          {{ cmdSubmitting ? 'Enviando...' : 'Enviar' }}
+          {{ cmdSubmitting ? 'Enviando...' : 'Negar executável' }}
         </button>
       </form>
 
@@ -654,10 +591,10 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Path deny/allow: block individual executable paths via BPF denied_paths map -->
+    <!-- Path deny: block individual executable paths via BPF denied_paths map -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center gap-2 mb-3">
-        <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir executável (BPF)</span>
+        <span class="text-xs font-bold text-slate-400 uppercase">Negar executável (BPF)</span>
         <span class="text-xs text-slate-500">sem cgroup.procs</span>
       </div>
       <form @submit.prevent="denyPath" class="flex flex-col sm:flex-row gap-4 items-end">
@@ -694,7 +631,7 @@ onUnmounted(() => {
     <!-- PID deny/allow: move a PID into or out of the denied cgroup via cgroup.procs -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center gap-2 mb-3">
-        <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir PID (cgroup.procs)</span>
+        <span class="text-xs font-bold text-slate-400 uppercase">Negar PID (cgroup.procs)</span>
         <span class="text-xs text-slate-500">move o PID para/fora do cgroup negado</span>
       </div>
 
@@ -727,36 +664,6 @@ onUnmounted(() => {
         </div>
         <div>{{ pidDenyResult.message }}</div>
       </div>
-
-      <!-- Allow PID -->
-      <form @submit.prevent="allowPid" class="flex flex-col sm:flex-row gap-4 items-end mb-4">
-        <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-400">PID para permitir</label>
-          <input
-            v-model="pidAllowValue"
-            type="number"
-            placeholder="PID (ex: 1234)"
-            class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-            @keyup.enter="allowPid"
-          />
-        </div>
-        <button
-          type="submit"
-          :disabled="pidAllowSubmitting"
-          class="bg-green-600 hover:bg-green-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
-        >
-          {{ pidAllowSubmitting ? 'Enviando...' : 'Permitir PID' }}
-        </button>
-      </form>
-
-      <div v-if="pidAllowResult" class="mt-1 p-3 rounded text-sm font-mono"
-           :class="pidAllowResult.ok ? 'bg-green-900/20 border border-green-700 text-green-300' : 'bg-red-900/20 border border-red-700 text-red-300'">
-        <div class="flex justify-between mb-1">
-          <span>{{ pidAllowResult.sent ? JSON.stringify(pidAllowResult.sent) : '—' }}</span>
-          <span @click="pidAllowResult = null" class="cursor-pointer hover:underline">×</span>
-        </div>
-        <div>{{ pidAllowResult.message }}</div>
-      </div>
     </div>
 
     <!-- Denied cgroup paths: currently denied paths and their resolved inodes -->
@@ -781,20 +688,12 @@ onUnmounted(() => {
               (inode {{ entry.inode }})
             </span>
           </div>
-          <button
-            @click="allowPath(entry.path)"
-            class="text-xs text-red-400 hover:text-red-300 underline"
-            :title="`Permitir ${entry.path}`"
-          >
-            Permitir
-          </button>
         </div>
       </div>
       <div class="mt-2 text-[10px] text-slate-500">
         Cada linha mostra um caminho de cgroup negado. O inode é resolvido
         automaticamente pelo servidor (o BPF nega com base no número do
-        inode, não no caminho). Clique em "Permitir" para remover da lista
-        de negação.
+        inode, não no caminho). Remova da lista para permitir novamente.
       </div>
     </div>
 
