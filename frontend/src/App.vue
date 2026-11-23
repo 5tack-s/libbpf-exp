@@ -18,59 +18,11 @@ const wsError = ref(null)
 const rawMessages = ref([])
 
 // Command form state
-const cmdAction = ref("deny_path") // "deny_path" | "allow_path"
 const cmdValue = ref("")
 const cmdSubmitting = ref(false)
 const cmdResult = ref(null) // { ok, status, message, sent }
 
-// The user always works with cgroup paths. Inodes are resolved server-side
-// (the server stats the path and keys the BPF denied_cgroups map on the
-// inode, exactly like path_to_id() in police.c). The user never types or
-// sees a raw inode number.
 const API_URL = "http://localhost:8000"
-
-const sendCommand = async () => {
-  const value = cmdValue.value.trim()
-  if (!value) {
-    cmdResult.value = { ok: false, status: 400, message: "Caminho é obrigatório", sent: null }
-    return
-  }
-
-  // Always send a path. The middleman resolves it to an inode internally
-  // and forwards deny_path/allow_path to the auditor, which stats the path
-  // and updates the BPF denied_cgroups map keyed by st_ino.
-  const payload = { action: cmdAction.value, path: value }
-
-  cmdSubmitting.value = true
-  cmdResult.value = null
-  try {
-    const resp = await fetch(`${API_URL}/v1/command`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-    const body = await resp.json()
-    const ok = resp.ok && body.status !== "error"
-    cmdResult.value = {
-      ok,
-      status: resp.status,
-      message: body.message || (ok ? "Comando enviado" : "Comando falhou"),
-      sent: body.sent || null,
-    }
-    if (ok) {
-      // Refresh the denied list after a successful deny/allow command.
-      await fetchDenied()
-    }
-  } catch (err) {
-    cmdResult.value = { ok: false, status: 0, message: err.message, sent: null }
-  } finally {
-    cmdSubmitting.value = false
-  }
-}
-
-const clearCmdResult = () => {
-  cmdResult.value = null
-}
 
 const clearCmdResult = () => {
   cmdResult.value = null
@@ -98,14 +50,9 @@ const deniedLoading = ref(false)
 const DEFAULT_CGROUP_PATH = "/sys/fs/cgroup/denied"
 const activeCgroup = ref(DEFAULT_CGROUP_PATH)
 
-// Currently denied executable paths (fetched from the middleman).
-const deniedPaths = ref([]) // [{ path, inode? }]
-const deniedPathsLoading = ref(false)
-
 // cgroup.procs contents (PIDs inside the denied cgroup) — read only.
 // No write/remove here because cgroup.procs writes can fail with EBUSY
-// under WSL2. Use the "Negar PID (cgroup.procs)" panel instead to block
-// or unblock PIDs via the BPF denied_pids map.
+// under WSL2. Use the "Negar PID (cgroup.procs)" panel to block PIDs.
 const cgProcsCgroup = ref(DEFAULT_CGROUP_PATH)
 const cgProcsPids = ref([]) // [number]
 const cgProcsLoading = ref(false)
