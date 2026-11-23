@@ -706,10 +706,10 @@ async def pid_deny(req: PidRequest):
         except OSError as exc:
             last_exc = exc
             if exc.errno != errno.EBUSY or attempt == 9:
-                raise
+                return {"status": "error", "message": f"Failed to write cgroup.procs: {exc}"}
             time.sleep(1.0 * (attempt + 1))
     if last_exc is not None:
-        raise last_exc
+        return {"status": "error", "message": f"Failed to write cgroup.procs after retries: {last_exc}"}
 
     # Send deny_path command to the auditor for the sub-cgroup path
     payload = {"action": "deny_path", "path": cgroup_dir}
