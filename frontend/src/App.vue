@@ -164,6 +164,7 @@ const denyPath = async () => {
     }
     if (ok) {
       pathDenyValue.value = ""
+      await fetchDenied()
     }
   } catch (err) {
     pathDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
@@ -644,7 +645,17 @@ onUnmounted(() => {
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center justify-between gap-2 mb-3">
         <span class="text-xs font-bold text-slate-400 uppercase">Caminhos negados</span>
-        <span class="text-xs text-slate-500">{{ deniedCgroups.length }} entrada(s)</span>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500">{{ deniedCgroups.length }} entrada(s)</span>
+          <button
+            v-if="!deniedLoading"
+            @click="fetchDenied"
+            class="text-xs text-blue-400 hover:text-blue-300 underline"
+            :title="Atualizar lista de caminhos negados"
+          >
+            Atualizar
+          </button>
+        </div>
       </div>
       <div v-if="deniedLoading" class="text-xs text-yellow-500 animate-pulse">carregando...</div>
       <div v-else-if="deniedCgroups.length === 0" class="text-slate-500 text-sm italic">
