@@ -670,49 +670,28 @@ async def cgroup_remove(req: CgroupMoveRequest):
     return {"status": "ok", "pid": pid, "from": cgroup_path, "to": parent}
 
 
-class PidRequest(BaseModel):
-    pid: int
+class PathRequest(BaseModel):
+    path: str
 
 
-@app.post("/v1/pid/deny")
-async def pid_deny(req: PidRequest):
-    """Deny a PID by creating a sub-cgroup under /sys/fs/cgroup/denied/<pid>/,
-    writing the PID to its cgroup.procs, and denying that sub-cgroup's path
-    via the BPF denied_cgroups map. This blocks the PID's bpf() syscalls
-    because the LSM hook checks the caller's cgroup id against the deny map.
+@app.post("/v1/path/deny")
+async def path_deny(req: PathRequest):
+    """Deny an executable path by resolving it to its inode and adding
+    it to the BPF denied_paths map. The police LSM hook reads the caller's
+    executable inode via current->mm->exe_file->f_inode->i_ino and checks
+    it against this map, blocking any bpf() call from that executable
+    regardless of cgroup membership."""
+    path = req.path
+    if not path:
+        return {"status": "error", "message": "Path is required"}
 
-    Works without writing to the parent cgroup's cgroup.procs (broken under
-    WSL2).
-    """
-    pid = req.pid
-    if pid <= 0:
-        return {"status": "error", "message": "PID must be a positive integer"}
-
-    cgroup_dir = f"{DEFAULT_CGROUP_PATH}/pid{pid}"
     try:
-        os.makedirs(cgroup_dir, exist_ok=True)
+        st = os.stat(path)
     except OSError as exc:
-        return {"status": "error", "message": f"Failed to create cgroup dir: {exc}"}
+        return {"status": "error", "message": f"Failed to stat {path}: {exc}"}
 
-    # Write the PID to the sub-cgroup's cgroup.procs
-    cgroup_procs = f"{cgroup_dir}/cgroup.procs"
-    last_exc = None
-    for attempt in range(10):
-        try:
-            with open(cgroup_procs, "w") as f:
-                f.write(str(pid))
-            last_exc = None
-            break
-        except OSError as exc:
-            last_exc = exc
-            if exc.errno != errno.EBUSY or attempt == 9:
-                return {"status": "error", "message": f"Failed to write cgroup.procs: {exc}"}
-            time.sleep(1.0 * (attempt + 1))
-    if last_exc is not None:
-        return {"status": "error", "message": f"Failed to write cgroup.procs after retries: {last_exc}"}
-
-    # Send deny_path command to the auditor for the sub-cgroup path
-    payload = {"action": "deny_path", "path": cgroup_dir}
+    inode = st.st_ino
+    payload = {"action": "deny_path", "inode": inode, "path": path}
     text = json.dumps(payload)
 
     with auditor_conn_lock:
@@ -733,39 +712,27 @@ async def pid_deny(req: PidRequest):
 
     await broadcast(json.dumps({
         "type": "CMD_SENT",
-        "action": "deny_pid",
+        "action": "deny_path",
         "payload": payload,
     }))
     return {"status": "ok", "sent": text}
 
 
-@app.post("/v1/pid/allow")
-async def pid_allow(req: PidRequest):
-    """Allow a PID by removing it from the BPF denied_pids map and removing
-    its sub-cgroup."""
-    pid = req.pid
-    if pid <= 0:
-        return {"status": "error", "message": "PID must be a positive integer"}
+@app.post("/v1/path/allow")
+async def path_allow(req: PathRequest):
+    """Allow an executable path by removing its inode from the BPF
+    denied_paths map."""
+    path = req.path
+    if not path:
+        return {"status": "error", "message": "Path is required"}
 
-    cgroup_dir = f"{DEFAULT_CGROUP_PATH}/pid{pid}"
-    cgroup_procs = f"{cgroup_dir}/cgroup.procs"
-
-    # Write the PID back to the parent cgroup.procs (remove from denied cgroup)
-    parent_procs = f"{DEFAULT_CGROUP_PATH}/cgroup.procs"
     try:
-        with open(parent_procs, "w") as f:
-            f.write(str(pid))
+        st = os.stat(path)
     except OSError as exc:
-        return {"status": "error", "message": str(exc)}
+        return {"status": "error", "message": f"Failed to stat {path}: {exc}"}
 
-    # Remove the sub-cgroup directory
-    try:
-        os.rmdir(cgroup_dir)
-    except OSError as exc:
-        return {"status": "error", "message": f"Failed to remove cgroup dir: {exc}"}
-
-    # Send allow_path command to the auditor for the sub-cgroup path
-    payload = {"action": "allow_path", "path": cgroup_dir}
+    inode = st.st_ino
+    payload = {"action": "allow_path", "inode": inode, "path": path}
     text = json.dumps(payload)
 
     with auditor_conn_lock:
@@ -786,7 +753,7 @@ async def pid_allow(req: PidRequest):
 
     await broadcast(json.dumps({
         "type": "CMD_SENT",
-        "action": "allow_pid",
+        "action": "allow_path",
         "payload": payload,
     }))
     return {"status": "ok", "sent": text}
@@ -797,7 +764,7 @@ async def denied():
     """Return the currently denied cgroup paths and PIDs.
 
     The list is maintained by the middleman from /v1/command deny/allow
-    and /v1/pid/deny/allow requests and persisted to disk, so it survives
+    and /v1/path/deny/allow requests and persisted to disk, so it survives
     middleman restarts.
     Each entry is {"path": str, "inode": Optional[int]} where the inode is
     resolved server-side for display only -- the user never types it.

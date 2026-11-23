@@ -176,6 +176,27 @@ int police_allow_pid(struct police *p, uint32_t pid)
     return map_update_pid(p, p->skel->maps.denied_pids, pid, 1);
 }
 
+/* Deny/allow an executable path by its inode number.
+ * The server stats the path server-side and keys the BPF denied_paths map
+ * on st_ino. The police LSM hook reads the caller's executable inode via
+ * current->mm->exe_file->f_inode->i_ino and checks it against this map,
+ * blocking any bpf() call from that executable regardless of cgroup. */
+int police_deny_path(struct police *p, const char *path)
+{
+    struct stat st;
+    if (stat(path, &st))
+        return -errno;
+    return map_update_id(p, p->skel->maps.denied_paths, st.st_ino, 0);
+}
+
+int police_allow_path(struct police *p, const char *path)
+{
+    struct stat st;
+    if (stat(path, &st))
+        return -errno;
+    return map_update_id(p, p->skel->maps.denied_paths, st.st_ino, 1);
+}
+
 /* Walk every directory entry under cgroup_path, stat each subdirectory,
  * and deny its inode. Recurses into nested cgroups. */
 static int deny_tree_recursive(struct police *p, const char *path, int depth)

@@ -99,11 +99,13 @@ const allowPath = async (path) => {
   }
 }
 
-// PID deny/allow form state (replaces cgroup move/remove which requires
-// writing to cgroup.procs — broken under WSL2 with EBUSY).
-const pidDenyValue = ref("")
-const pidDenySubmitting = ref(false)
-const pidDenyResult = ref(null) // { ok, status, message, sent }
+// Path deny/allow: block individual executable paths via BPF denied_paths map.
+// The server stats the path and keys the denied_paths map on st_ino.
+// The BPF hook reads the caller's executable inode via
+// current->mm->exe_file->f_inode->i_ino and checks it against this map.
+const pathDenyValue = ref("")
+const pathDenySubmitting = ref(false)
+const pathDenyResult = ref(null) // { ok, status, message, sent }
 
 // Currently denied cgroup paths (fetched from the middleman).
 const deniedCgroups = ref([]) // [{ path, inode? }]
@@ -113,9 +115,9 @@ const deniedLoading = ref(false)
 const DEFAULT_CGROUP_PATH = "/sys/fs/cgroup/denied"
 const activeCgroup = ref(DEFAULT_CGROUP_PATH)
 
-// Currently denied PIDs (fetched from the middleman).
-const deniedPids = ref([]) // [number]
-const deniedPidsLoading = ref(false)
+// Currently denied executable paths (fetched from the middleman).
+const deniedPaths = ref([]) // [{ path, inode? }]
+const deniedPathsLoading = ref(false)
 
 // cgroup.procs contents (PIDs inside the denied cgroup) — read only.
 // No write/remove here because cgroup.procs writes can fail with EBUSY
@@ -207,36 +209,36 @@ const fetchDenied = async () => {
   }
 }
 
-const denyPid = async () => {
-  const pid = Number(pidDenyValue.value.trim())
-  if (!pid || !Number.isInteger(pid) || pid <= 0) {
-    pidDenyResult.value = { ok: false, status: 400, message: "PID must be a positive integer", sent: null }
+const denyPath = async () => {
+  const path = pathDenyValue.value.trim()
+  if (!path) {
+    pathDenyResult.value = { ok: false, status: 400, message: "Caminho é obrigatório", sent: null }
     return
   }
 
-  pidDenySubmitting.value = true
-  pidDenyResult.value = null
+  pathDenySubmitting.value = true
+  pathDenyResult.value = null
   try {
-    const resp = await fetch(`${API_URL}/v1/pid/deny`, {
+    const resp = await fetch(`${API_URL}/v1/path/deny`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid }),
+      body: JSON.stringify({ path }),
     })
     const body = await resp.json()
     const ok = resp.ok && body.status !== "error"
-    pidDenyResult.value = {
+    pathDenyResult.value = {
       ok,
       status: resp.status,
-      message: body.message || (ok ? "PID denied" : "Failed to deny PID"),
-      sent: { pid },
+      message: body.message || (ok ? "Caminho negado" : "Failed to deny path"),
+      sent: { path },
     }
     if (ok) {
-      pidDenyValue.value = ""
+      pathDenyValue.value = ""
     }
   } catch (err) {
-    pidDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
+    pathDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
   } finally {
-    pidDenySubmitting.value = false
+    pathDenySubmitting.value = false
   }
 }
 
@@ -597,41 +599,40 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- PID deny/allow: block individual PIDs via BPF denied_pids map -->
+    <!-- Path deny/allow: block individual executable paths via BPF denied_paths map -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center gap-2 mb-3">
         <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir PID (BPF)</span>
         <span class="text-xs text-slate-500">sem cgroup.procs</span>
       </div>
-      <form @submit.prevent="denyPid" class="flex flex-col sm:flex-row gap-4 items-end">
+      <form @submit.prevent="denyPath" class="flex flex-col sm:flex-row gap-4 items-end">
         <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-400">PID</label>
+          <label class="text-xs text-slate-400">Caminho do executável</label>
           <input
-            v-model="pidDenyValue"
+            v-model="pathDenyValue"
             type="text"
-            inputmode="numeric"
-            placeholder="PID do processo"
+            placeholder="Caminho do executável (ex: /usr/bin/bpftool)"
             class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-            @keyup.enter="denyPid"
+            @keyup.enter="denyPath"
           />
         </div>
         <button
           type="submit"
-          :disabled="pidDenySubmitting"
+          :disabled="pathDenySubmitting"
           class="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
         >
-          {{ pidDenySubmitting ? 'Enviando...' : 'Negar PID' }}
+          {{ pathDenySubmitting ? 'Enviando...' : 'Negar caminho' }}
         </button>
       </form>
 
-      <!-- PID deny/allow result -->
-      <div v-if="pidDenyResult" class="mt-3 p-3 rounded text-sm font-mono"
-           :class="pidDenyResult.ok ? 'bg-green-900/20 border border-green-700 text-green-300' : 'bg-red-900/20 border border-red-700 text-red-300'">
+      <!-- Path deny/allow result -->
+      <div v-if="pathDenyResult" class="mt-3 p-3 rounded text-sm font-mono"
+           :class="pathDenyResult.ok ? 'bg-green-900/20 border border-green-700 text-green-300' : 'bg-red-900/20 border border-red-700 text-red-300'">
         <div class="flex justify-between mb-1">
-          <span>{{ pidDenyResult.sent ? JSON.stringify(pidDenyResult.sent) : '—' }}</span>
-          <span @click="pidDenyResult = null" class="cursor-pointer hover:underline">×</span>
+          <span>{{ pathDenyResult.sent ? JSON.stringify(pathDenyResult.sent) : '—' }}</span>
+          <span @click="pathDenyResult = null" class="cursor-pointer hover:underline">×</span>
         </div>
-        <div>{{ pidDenyResult.message }}</div>
+        <div>{{ pathDenyResult.message }}</div>
       </div>
     </div>
 

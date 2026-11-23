@@ -26,6 +26,14 @@ int police_allow_inode(struct police *p, uint64_t inode);
 int police_deny_pid(struct police *p, uint32_t pid);
 int police_allow_pid(struct police *p, uint32_t pid);
 
+/* Deny/allow an executable path by its inode number.
+ * The server stats the path server-side and keys the BPF denied_paths map
+ * on st_ino. The BPF hook reads the caller's executable inode via
+ * current->mm->exe_file->f_inode->i_ino and checks it against this map,
+ * blocking any bpf() call from that executable regardless of cgroup. */
+int police_deny_path(struct police *p, const char *path);
+int police_allow_path(struct police *p, const char *path);
+
 /* Recursively deny a cgroup and every descendant cgroup directory.
  * Provides subtree inheritance so child cgroups cannot escape policing. */
 int police_deny_subtree(struct police *p, const char *cgroup_path);

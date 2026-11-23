@@ -33,6 +33,18 @@ struct {
     __type(value, u8);
 } denied_pids SEC(".maps");
 
+/* Path deny list — userspace populates this with file inode numbers
+ * obtained via stat() on the target executable. The BPF hook reads the
+ * current process's executable inode via current->mm->exe_file->f_inode->i_ino
+ * and looks it up here. This lets you deny any executable path (e.g.
+ * /usr/bin/bpftool) regardless of which cgroup it runs in. */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 4096);
+    __type(key, u64);
+    __type(value, u8);
+} denied_paths SEC(".maps");
+
 /* config[0]: 0 = enforce (deny), 1 = audit-only (log but allow) */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -123,6 +135,41 @@ int BPF_PROG(police_bpf, int cmd, union bpf_attr *attr, unsigned int size, bool 
             if (!audit_only || !*audit_only)
                 return -EPERM;
             return 0;
+        }
+    }
+
+    /* --- Path deny list --- */
+    /* Userspace populates denied_paths with executable inode numbers
+     * obtained via stat(). We read the current process's executable
+     * inode via current->mm->exe_file->f_inode->i_ino and look it up
+     * here. This blocks any bpf() call from that executable, regardless
+     * of which cgroup it runs in. */
+    {
+        struct file *exe_file = NULL;
+        struct inode *exe_inode = NULL;
+        u64 exe_inode_num = 0;
+
+        exe_file = BPF_CORE_READ(current, mm, exe_file);
+        if (exe_file) {
+            exe_inode = BPF_CORE_READ(exe_file, f_inode);
+            if (exe_inode) {
+                exe_inode_num = BPF_CORE_READ(exe_inode, i_ino);
+                if (bpf_map_lookup_elem(&denied_paths, &exe_inode_num)) {
+                    e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+                    if (e) {
+                        e->cgid = cgid;
+                        e->inode = exe_inode_num;
+                        e->pid = bpf_get_current_pid_tgid() >> 32;
+                        e->cmd = cmd;
+                        e->reason = REASON_PATH;
+                        bpf_get_current_comm(&e->comm, sizeof(e->comm));
+                        bpf_ringbuf_submit(e, 0);
+                    }
+                    if (!audit_only || !*audit_only)
+                        return -EPERM;
+                    return 0;
+                }
+            }
         }
     }
 

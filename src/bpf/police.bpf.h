@@ -9,6 +9,7 @@ enum police_reason {
     REASON_CGROUP = 1,
     REASON_INODE = 2,
     REASON_PID = 3,
+    REASON_PATH = 4,
 };
 
 struct police_event {
