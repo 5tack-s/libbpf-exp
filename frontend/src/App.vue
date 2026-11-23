@@ -107,6 +107,15 @@ const pathDenyValue = ref("")
 const pathDenySubmitting = ref(false)
 const pathDenyResult = ref(null) // { ok, status, message, sent }
 
+// PID deny/allow: move a PID into or out of the denied cgroup via cgroup.procs.
+// This writes to cgroup.procs, so it works without the BPF denied_pids map.
+const pidDenyValue = ref("")
+const pidDenySubmitting = ref(false)
+const pidDenyResult = ref(null) // { ok, status, message, sent }
+const pidAllowValue = ref("")
+const pidAllowSubmitting = ref(false)
+const pidAllowResult = ref(null) // { ok, status, message, sent }
+
 // Currently denied cgroup paths (fetched from the middleman).
 const deniedCgroups = ref([]) // [{ path, inode? }]
 const deniedLoading = ref(false)
@@ -242,27 +251,73 @@ const denyPath = async () => {
   }
 }
 
-const allowPid = async (pid) => {
+const denyPid = async () => {
+  const pid = pidDenyValue.value.trim()
+  if (!pid) {
+    pidDenyResult.value = { ok: false, status: 400, message: "PID é obrigatório", sent: null }
+    return
+  }
+
   pidDenySubmitting.value = true
   pidDenyResult.value = null
   try {
-    const resp = await fetch(`${API_URL}/v1/pid/allow`, {
+    const resp = await fetch(`${API_URL}/v1/cgroup/move`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid }),
+      body: JSON.stringify({ pid: Number(pid), cgroup_path: DEFAULT_CGROUP_PATH }),
     })
     const body = await resp.json()
     const ok = resp.ok && body.status !== "error"
     pidDenyResult.value = {
       ok,
       status: resp.status,
-      message: body.message || (ok ? "PID allowed" : "Failed to allow PID"),
+      message: body.message || (ok ? "PID movido para cgroup negado" : "Falha ao negar PID"),
       sent: { pid },
+    }
+    if (ok) {
+      pidDenyValue.value = ""
+      await fetchDenied()
+      await fetchCgroupProcs()
     }
   } catch (err) {
     pidDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
   } finally {
     pidDenySubmitting.value = false
+  }
+}
+
+const allowPid = async () => {
+  const pid = pidAllowValue.value.trim()
+  if (!pid) {
+    pidAllowResult.value = { ok: false, status: 400, message: "PID é obrigatório", sent: null }
+    return
+  }
+
+  pidAllowSubmitting.value = true
+  pidAllowResult.value = null
+  try {
+    const resp = await fetch(`${API_URL}/v1/cgroup/remove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pid: Number(pid), cgroup_path: DEFAULT_CGROUP_PATH }),
+    })
+    const body = await resp.json()
+    const ok = resp.ok && body.status !== "error"
+    pidAllowResult.value = {
+      ok,
+      status: resp.status,
+      message: body.message || (ok ? "PID removido do cgroup negado" : "Falha ao permitir PID"),
+      sent: { pid },
+    }
+    if (ok) {
+      pidAllowValue.value = ""
+      await fetchDenied()
+      await fetchCgroupProcs()
+    }
+  } catch (err) {
+    pidAllowResult.value = { ok: false, status: 0, message: err.message, sent: null }
+  } finally {
+    pidAllowSubmitting.value = false
   }
 }
 
@@ -602,7 +657,7 @@ onUnmounted(() => {
     <!-- Path deny/allow: block individual executable paths via BPF denied_paths map -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center gap-2 mb-3">
-        <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir PID (BPF)</span>
+        <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir executável (BPF)</span>
         <span class="text-xs text-slate-500">sem cgroup.procs</span>
       </div>
       <form @submit.prevent="denyPath" class="flex flex-col sm:flex-row gap-4 items-end">
@@ -633,6 +688,74 @@ onUnmounted(() => {
           <span @click="pathDenyResult = null" class="cursor-pointer hover:underline">×</span>
         </div>
         <div>{{ pathDenyResult.message }}</div>
+      </div>
+    </div>
+
+    <!-- PID deny/allow: move a PID into or out of the denied cgroup via cgroup.procs -->
+    <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-xs font-bold text-slate-400 uppercase">Negar/permitir PID (cgroup.procs)</span>
+        <span class="text-xs text-slate-500">move o PID para/fora do cgroup negado</span>
+      </div>
+
+      <!-- Deny PID -->
+      <form @submit.prevent="denyPid" class="flex flex-col sm:flex-row gap-4 items-end mb-4">
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400">PID para negar</label>
+          <input
+            v-model="pidDenyValue"
+            type="number"
+            placeholder="PID (ex: 1234)"
+            class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            @keyup.enter="denyPid"
+          />
+        </div>
+        <button
+          type="submit"
+          :disabled="pidDenySubmitting"
+          class="bg-red-600 hover:bg-red-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
+        >
+          {{ pidDenySubmitting ? 'Enviando...' : 'Negar PID' }}
+        </button>
+      </form>
+
+      <div v-if="pidDenyResult" class="mt-1 mb-3 p-3 rounded text-sm font-mono"
+           :class="pidDenyResult.ok ? 'bg-green-900/20 border border-green-700 text-green-300' : 'bg-red-900/20 border border-red-700 text-red-300'">
+        <div class="flex justify-between mb-1">
+          <span>{{ pidDenyResult.sent ? JSON.stringify(pidDenyResult.sent) : '—' }}</span>
+          <span @click="pidDenyResult = null" class="cursor-pointer hover:underline">×</span>
+        </div>
+        <div>{{ pidDenyResult.message }}</div>
+      </div>
+
+      <!-- Allow PID -->
+      <form @submit.prevent="allowPid" class="flex flex-col sm:flex-row gap-4 items-end mb-4">
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400">PID para permitir</label>
+          <input
+            v-model="pidAllowValue"
+            type="number"
+            placeholder="PID (ex: 1234)"
+            class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            @keyup.enter="allowPid"
+          />
+        </div>
+        <button
+          type="submit"
+          :disabled="pidAllowSubmitting"
+          class="bg-green-600 hover:bg-green-500 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50"
+        >
+          {{ pidAllowSubmitting ? 'Enviando...' : 'Permitir PID' }}
+        </button>
+      </form>
+
+      <div v-if="pidAllowResult" class="mt-1 p-3 rounded text-sm font-mono"
+           :class="pidAllowResult.ok ? 'bg-green-900/20 border border-green-700 text-green-300' : 'bg-red-900/20 border border-red-700 text-red-300'">
+        <div class="flex justify-between mb-1">
+          <span>{{ pidAllowResult.sent ? JSON.stringify(pidAllowResult.sent) : '—' }}</span>
+          <span @click="pidAllowResult = null" class="cursor-pointer hover:underline">×</span>
+        </div>
+        <div>{{ pidAllowResult.message }}</div>
       </div>
     </div>
 
