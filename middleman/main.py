@@ -372,11 +372,14 @@ async def lifespan(app: FastAPI):
 # Create the app ONCE with lifespan
 app = FastAPI(title="libbpf-exp Middleman", lifespan=lifespan)
 
-# CORS for regular HTTP endpoints
+# CORS for regular HTTP endpoints. The frontend (Vite dev server on :5173
+# or any other origin) calls the API on :8000. allow_credentials must not be
+# paired with allow_origins=["*"] (spec-invalid); since the frontend sends no
+# cookies/authorization headers, credentials are not required.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -705,9 +708,12 @@ async def path_deny(req: PathRequest):
     except (OSError, BrokenPipeError, ConnectionError) as exc:
         return {"status": "error", "message": str(exc)}
 
-    async with denied_pids_lock:
-        if pid not in denied_pids:
-            denied_pids.append(pid)
+    # Track the denied path locally so the frontend can display it.
+    # Resolved to an inode server-side (mirroring path_to_id() in police.c).
+    async with denied_lock:
+        entry = {"path": path, "inode": inode}
+        if entry not in denied_cgroups:
+            denied_cgroups.append(entry)
         _persist_denied()
 
     await broadcast(json.dumps({
@@ -746,9 +752,9 @@ async def path_allow(req: PathRequest):
     except (OSError, BrokenPipeError, ConnectionError) as exc:
         return {"status": "error", "message": str(exc)}
 
-    async with denied_pids_lock:
-        if pid in denied_pids:
-            denied_pids.remove(pid)
+    # Remove the allowed path from the local deny list.
+    async with denied_lock:
+        denied_cgroups[:] = [e for e in denied_cgroups if e.get("path") != path]
         _persist_denied()
 
     await broadcast(json.dumps({
