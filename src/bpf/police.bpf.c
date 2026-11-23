@@ -1,6 +1,8 @@
 #include <vmlinux.h>
+#include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
 #include "police.bpf.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
@@ -148,26 +150,29 @@ int BPF_PROG(police_bpf, int cmd, union bpf_attr *attr, unsigned int size, bool 
         struct file *exe_file = NULL;
         struct inode *exe_inode = NULL;
         u64 exe_inode_num = 0;
+        struct task_struct *task = (struct task_struct *)(long)bpf_get_current_task();
 
-        exe_file = BPF_CORE_READ(current, mm, exe_file);
-        if (exe_file) {
-            exe_inode = BPF_CORE_READ(exe_file, f_inode);
-            if (exe_inode) {
-                exe_inode_num = BPF_CORE_READ(exe_inode, i_ino);
-                if (bpf_map_lookup_elem(&denied_paths, &exe_inode_num)) {
-                    e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-                    if (e) {
-                        e->cgid = cgid;
-                        e->inode = exe_inode_num;
-                        e->pid = bpf_get_current_pid_tgid() >> 32;
-                        e->cmd = cmd;
-                        e->reason = REASON_PATH;
-                        bpf_get_current_comm(&e->comm, sizeof(e->comm));
-                        bpf_ringbuf_submit(e, 0);
+        if (task) {
+            exe_file = BPF_CORE_READ(task, mm, exe_file);
+            if (exe_file) {
+                exe_inode = BPF_CORE_READ(exe_file, f_inode);
+                if (exe_inode) {
+                    exe_inode_num = BPF_CORE_READ(exe_inode, i_ino);
+                    if (bpf_map_lookup_elem(&denied_paths, &exe_inode_num)) {
+                        e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+                        if (e) {
+                            e->cgid = cgid;
+                            e->inode = exe_inode_num;
+                            e->pid = bpf_get_current_pid_tgid() >> 32;
+                            e->cmd = cmd;
+                            e->reason = REASON_PATH;
+                            bpf_get_current_comm(&e->comm, sizeof(e->comm));
+                            bpf_ringbuf_submit(e, 0);
+                        }
+                        if (!audit_only || !*audit_only)
+                            return -EPERM;
+                        return 0;
                     }
-                    if (!audit_only || !*audit_only)
-                        return -EPERM;
-                    return 0;
                 }
             }
         }

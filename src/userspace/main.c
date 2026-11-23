@@ -300,7 +300,7 @@ int main(int argc, char **argv)
     if (deny_subtree)
         err = police_deny_subtree(p, cgroup_path);
     else
-        err = police_deny_path(p, cgroup_path);
+        err = police_deny_cgroup_path(p, cgroup_path);
 
     if (err) {
         fprintf(stderr, "[FATAL] Failed to deny %s: %s\n",

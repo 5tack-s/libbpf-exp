@@ -13,8 +13,8 @@ int police_poll(struct police *p, int timeout_ms);
 
 int police_deny_id(struct police *p, uint64_t cgid);
 int police_allow_id(struct police *p, uint64_t cgid); /* actually removes from deny list */
-int police_deny_path(struct police *p, const char *cgroup_path);
-int police_allow_path(struct police *p, const char *cgroup_path);
+int police_deny_cgroup_path(struct police *p, const char *cgroup_path);
+int police_allow_cgroup_path(struct police *p, const char *cgroup_path);
 
 /* Deny an arbitrary inode number (e.g. a cgroup directory inode collected
  * from a subtree walk). */

@@ -131,14 +131,14 @@ int police_allow_id(struct police *p, uint64_t cgid)
     return map_update_id(p, p->skel->maps.denied_cgroups, cgid, 1);
 }
 
-int police_deny_path(struct police *p, const char *path)
+int police_deny_cgroup_path(struct police *p, const char *path)
 {
     uint64_t id;
     int err = path_to_id(path, &id);
     return err ? err : police_deny_id(p, id);
 }
 
-int police_allow_path(struct police *p, const char *path)
+int police_allow_cgroup_path(struct police *p, const char *path)
 {
     uint64_t id;
     int err = path_to_id(path, &id);
