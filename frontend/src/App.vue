@@ -651,7 +651,7 @@ onUnmounted(() => {
             v-if="!deniedLoading"
             @click="fetchDenied"
             class="text-xs text-blue-400 hover:text-blue-300 underline"
-            :title="Atualizar lista de caminhos negados"
+            :title="'Atualizar lista de caminhos negados'"
           >
             Atualizar
           </button>
