@@ -48,8 +48,8 @@ rm -f "$SOCK_PATH"
 # --- Create cgroup ---------------------------------------------------------
 echo "[monitor] Creating cgroup $CGROUP_PATH..."
 mkdir -p "$CGROUP_PATH"
-# Ensure the cgroup is empty and ready for use
-echo 0 > "$CGROUP_PATH/cgroup.procs" 2>/dev/null || true
+# Note: do NOT write to cgroup.procs here (writes PID 0 dummy data).
+# The auditor's cgroup.procs write happens when a PID is denied via web UI.
 
 # --- Start FastAPI middleman ----------------------------------------------
 echo "[monitor] Setting up Python virtualenv in $MIDDLEMAN_DIR/.venv..."
@@ -105,7 +105,6 @@ cleanup() {
     [[ -n "$FRONTEND_PID" ]] && kill "$FRONTEND_PID" 2>/dev/null || true
     # Move all processes out of the cgroup and remove it
     if [[ -d "$CGROUP_PATH" ]]; then
-        echo 0 > "$CGROUP_PATH/cgroup.procs" 2>/dev/null || true
         rmdir "$CGROUP_PATH" 2>/dev/null || true
     fi
     rm -f "$SOCK_PATH"
