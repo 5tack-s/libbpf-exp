@@ -24,11 +24,6 @@ option(COMPILE_STATIC "Compile bpf statically" OFF)
 option(GENERATE_VMLINUX "Generate vmlinux.h via bpftool at build time" ON)
 
 # Source tree layout:
-#   src/userspace/  - userspace C libraries + main entry (police, auditor, socket, main)
-#   src/bpf/        - BPF programs (police.bpf.c, auditor.bpf.c) and their headers
-#   include/        - public headers + generated vmlinux.h + skeletons
-#   gen/            - build output (BPF objects)
-#   build/          - CMake build output
 set(SRC
     ${CMAKE_SOURCE_DIR}/src/userspace/auditor.c
     ${CMAKE_SOURCE_DIR}/src/userspace/police.c
@@ -48,44 +43,21 @@ set(BPF_SRC ${CMAKE_SOURCE_DIR}/src/bpf)
 
 file(MAKE_DIRECTORY ${GEN})
 
-# Generate vmlinux.h from BTF if bpftool is available and generation is enabled.
-# This requires root and a BTF-enabled kernel. If unavailable, falls back to
-# a minimal vmlinux.h with the structs needed by the BPF programs.
-if(GENERATE_VMLINUX AND BPFTOOL)
-    execute_process(
-        COMMAND ${BPFTOOL} btf dump file /sys/kernel/btf/vmlinux format c
-        OUTPUT_FILE ${INCLUDE}/vmlinux.h
-        ERROR_QUIET
-        RESULT_VARIABLE vmlinux_gen_result
-    )
-    if(NOT vmlinux_gen_result EQUAL 0 OR NOT EXISTS ${INCLUDE}/vmlinux.h)
-        message(STATUS "bpftool vmlinux dump failed, generating fallback vmlinux.h")
-        file(WRITE ${INCLUDE}/vmlinux.h "/* Minimal vmlinux.h fallback */\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "struct file {\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "    struct inode *f_inode;\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "};\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "struct inode {\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "    umode_t i_mode;\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "    unsigned long i_ino;\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "};\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "struct mm_struct {\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "    struct file *exe_file;\n")
-        file(APPEND ${INCLUDE}/vmlinux.h "};\n")
-    endif()
-else()
-    message(STATUS "Skipping vmlinux.h generation (bpftool not found or GENERATE_VMLINUX=OFF)")
-    file(WRITE ${INCLUDE}/vmlinux.h "/* Minimal vmlinux.h fallback */\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "struct file {\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "    struct inode *f_inode;\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "};\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "struct inode {\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "    umode_t i_mode;\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "    unsigned long i_ino;\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "};\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "struct mm_struct {\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "    struct file *exe_file;\n")
-    file(APPEND ${INCLUDE}/vmlinux.h "};\n")
-endif()
+# Write a minimal vmlinux.h with the structs needed by BPF programs.
+# We do NOT rely on bpftool because it requires root/BTF and often fails.
+# If the user has bpftool+BTF, they can regenerate vmlinux.h manually:
+#   bpftool btf dump file /sys/kernel/btf/vmlinux format c > include/vmlinux.h
+file(WRITE ${INCLUDE}/vmlinux.h "/* Minimal vmlinux.h - libbpf-exp */\n")
+file(APPEND ${INCLUDE}/vmlinux.h "struct file {\n")
+file(APPEND ${INCLUDE}/vmlinux.h "    struct inode *f_inode;\n")
+file(APPEND ${INCLUDE}/vmlinux.h "};\n")
+file(APPEND ${INCLUDE}/vmlinux.h "struct inode {\n")
+file(APPEND ${INCLUDE}/vmlinux.h "    umode_t i_mode;\n")
+file(APPEND ${INCLUDE}/vmlinux.h "    unsigned long i_ino;\n")
+file(APPEND ${INCLUDE}/vmlinux.h "};\n")
+file(APPEND ${INCLUDE}/vmlinux.h "struct mm_struct {\n")
+file(APPEND ${INCLUDE}/vmlinux.h "    struct file *exe_file;\n")
+file(APPEND ${INCLUDE}/vmlinux.h "};\n")
 
 add_custom_target(vmlinux DEPENDS ${INCLUDE}/vmlinux.h)
 
@@ -119,7 +91,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE} ${GEN} ${USE
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -g -O2 -Wall)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE bpf)
 
-# Make sure the executable is rebuilt when any skel header changes.
 foreach(SKEL_TARGET IN LISTS BPF_SKEL_TARGETS)
     add_dependencies(${CMAKE_PROJECT_NAME} ${SKEL_TARGET})
 endforeach()
