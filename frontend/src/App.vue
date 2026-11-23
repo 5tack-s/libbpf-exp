@@ -147,9 +147,8 @@ const removeFromCgroup = async (pid, cgroupPath) => {
     const body = await resp.json()
     const ok = resp.ok && body.status !== "error"
     if (ok) {
-      // Optimistically remove from the local list; the poll will re-sync anyway.
       cgProcsPids.value = cgProcsPids.value.filter((p) => p !== pid)
-      await fetchDeniedPids()
+      await fetchDenied()
     } else {
       cgRemoveError.value = body.message || "Failed to remove PID from cgroup"
     }
@@ -190,82 +189,6 @@ const stopCgProcsPoll = () => {
   if (cgProcsInterval.value) {
     clearInterval(cgProcsInterval.value)
     cgProcsInterval.value = null
-  }
-}
-
-const fetchDeniedPids = async () => {
-  deniedPidsLoading.value = true
-  try {
-    const resp = await fetch(`${API_URL}/v1/denied`)
-    const body = await resp.json()
-    if (body.status === "ok") {
-      deniedPids.value = body.pids || []
-    }
-  } catch (err) {
-    console.error("[frontend] Failed to fetch denied pids:", err)
-  } finally {
-    deniedPidsLoading.value = false
-  }
-}
-
-const denyPid = async () => {
-  const pid = Number(pidDenyValue.value.trim())
-  if (!pid || !Number.isInteger(pid) || pid <= 0) {
-    pidDenyResult.value = { ok: false, status: 400, message: "PID must be a positive integer", sent: null }
-    return
-  }
-
-  pidDenySubmitting.value = true
-  pidDenyResult.value = null
-  try {
-    const resp = await fetch(`${API_URL}/v1/pid/deny`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid }),
-    })
-    const body = await resp.json()
-    const ok = resp.ok && body.status !== "error"
-    pidDenyResult.value = {
-      ok,
-      status: resp.status,
-      message: body.message || (ok ? "PID denied" : "Failed to deny PID"),
-      sent: { pid },
-    }
-    if (ok) {
-      pidDenyValue.value = ""
-      await fetchDeniedPids()
-    }
-  } catch (err) {
-    pidDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
-  } finally {
-    pidDenySubmitting.value = false
-  }
-}
-
-const allowPid = async (pid) => {
-  pidDenySubmitting.value = true
-  pidDenyResult.value = null
-  try {
-    const resp = await fetch(`${API_URL}/v1/pid/allow`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid }),
-    })
-    const body = await resp.json()
-    const ok = resp.ok && body.status !== "error"
-    pidDenyResult.value = {
-      ok,
-      status: resp.status,
-      message: body.message || (ok ? "PID allowed" : "Failed to allow PID"),
-      sent: { pid },
-    }
-    if (ok) {
-      await fetchDeniedPids()
-    }
-  } catch (err) {
-    pidDenyResult.value = { ok: false, status: 0, message: err.message, sent: null }
-  } finally {
-    pidDenySubmitting.value = false
   }
 }
 
@@ -451,7 +374,6 @@ onMounted(() => {
   console.log("[frontend] Mounted, starting WebSocket connection")
   connectWebSocket()
   fetchDenied()
-  fetchDeniedPids()
   fetchCgroupProcs()
   startCgProcsPoll()
 })
@@ -696,40 +618,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Denied PIDs: PIDs blocked by the BPF denied_pids map -->
-    <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
-      <div class="flex items-center justify-between gap-2 mb-3">
-        <span class="text-xs font-bold text-slate-400 uppercase">PIDs negados (BPF)</span>
-        <span class="text-xs text-slate-500">{{ deniedPids.length }} entrada(s)</span>
-      </div>
-      <div v-if="deniedPidsLoading" class="text-xs text-yellow-500 animate-pulse">carregando...</div>
-      <div v-else-if="deniedPids.length === 0" class="text-slate-500 text-sm italic">
-        Nenhum PID negado no momento.
-      </div>
-      <div v-else class="max-h-48 overflow-y-auto border border-slate-700/50 rounded bg-slate-900/30">
-        <div
-          v-for="pid in deniedPids"
-          :key="pid"
-          class="flex items-center justify-between px-3 py-2 border-b border-slate-700/50 last:border-0"
-        >
-          <span class="text-xs font-mono text-slate-300">{{ pid }}</span>
-          <button
-            :disabled="pidDenySubmitting"
-            @click="allowPid(pid)"
-            class="text-xs text-red-400 hover:text-red-300 underline disabled:text-slate-600 disabled:cursor-not-allowed"
-            :title="`Permitir PID ${pid}`"
-          >
-            Permitir
-          </button>
-        </div>
-      </div>
-      <div class="mt-2 text-[10px] text-slate-500">
-        Cada linha mostra um PID bloqueado pelo mapa BPF denied_pids. Clique
-        em "Permitir" para remover da lista de negação. Isso não escreve em
-        cgroup.procs, portanto não falha com EBUSY sob WSL2.
-      </div>
-    </div>
-
     <!-- cgroup.procs: PIDs currently inside the denied cgroup (read only) -->
     <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
       <div class="flex items-center justify-between gap-2 mb-3">
@@ -776,7 +664,7 @@ onUnmounted(() => {
         Cada linha mostra um PID listado em cgroup.procs do cgroup negado.
         Clique "Remover" para mover esse PID para o cgroup pai (saída do
         cgroup negado). Isso escreve em cgroup.procs; sob WSL2 pode falhar
-        com EBUSY — o servidor tenta até 5 vezes com backoff. Se não der,
+        com EBUSY — o servidor tenta até 10 vezes com backoff. Se não der,
         escreva manualmente: echo PID > /sys/fs/cgroup/cgroup.procs.
         Atualiza a cada 3s automaticamente.
       </div>

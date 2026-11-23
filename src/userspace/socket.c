@@ -371,14 +371,6 @@ int monitor_recv_cmd(struct monitor *m, struct monitor_cmd_req *cmd)
                     cmd->action = MONITOR_CMD_ALLOW_PATH;
                     if (json_get_str(line_start, "path", path_val, sizeof(path_val)) == 0)
                         strncpy(cmd->path, path_val, sizeof(cmd->path) - 1);
-                } else if (strcmp(action_str, "deny_pid") == 0) {
-                    cmd->action = MONITOR_CMD_DENY_PID;
-                    if (json_get_int(line_start, "pid", &inode_val) == 0)
-                        cmd->pid = (uint32_t)inode_val;
-                } else if (strcmp(action_str, "allow_pid") == 0) {
-                    cmd->action = MONITOR_CMD_ALLOW_PID;
-                    if (json_get_int(line_start, "pid", &inode_val) == 0)
-                        cmd->pid = (uint32_t)inode_val;
                 } else if (strcmp(action_str, "set_audit_only") == 0) {
                     cmd->action = MONITOR_CMD_SET_AUDIT_ONLY;
                     if (json_get_int(line_start, "enabled", &enabled_val) == 0)

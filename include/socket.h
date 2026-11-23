@@ -81,8 +81,6 @@ enum monitor_cmd {
     MONITOR_CMD_ALLOW_INODE,
     MONITOR_CMD_DENY_PATH,
     MONITOR_CMD_ALLOW_PATH,
-    MONITOR_CMD_DENY_PID,
-    MONITOR_CMD_ALLOW_PID,
     MONITOR_CMD_SET_AUDIT_ONLY,
 };
 
@@ -91,7 +89,6 @@ struct monitor_cmd_req {
     enum monitor_cmd action;
     uint64_t inode;       /* for deny/allow inode */
     char path[256];       /* for deny/allow path */
-    uint32_t pid;         /* for deny/allow pid */
     int enabled;          /* for set_audit_only */
 };
 

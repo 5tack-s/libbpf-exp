@@ -155,27 +155,6 @@ int police_allow_inode(struct police *p, uint64_t inode)
     return map_update_id(p, p->skel->maps.denied_inodes, inode, 1);
 }
 
-/* PID deny list — keys are u32 PIDs. Unlike cgroup-based denial, this
- * works without writing to cgroup.procs (broken under WSL2). */
-static int map_update_pid(struct police *p, struct bpf_map *map, uint32_t pid, int op)
-{
-    uint8_t one = 1;
-    if (op == 0) /* add */
-        return bpf_map__update_elem(map, &pid, sizeof(pid), &one, sizeof(one), BPF_ANY);
-    else /* remove */
-        return bpf_map__delete_elem(map, &pid, sizeof(pid), 0);
-}
-
-int police_deny_pid(struct police *p, uint32_t pid)
-{
-    return map_update_pid(p, p->skel->maps.denied_pids, pid, 0);
-}
-
-int police_allow_pid(struct police *p, uint32_t pid)
-{
-    return map_update_pid(p, p->skel->maps.denied_pids, pid, 1);
-}
-
 /* Walk every directory entry under cgroup_path, stat each subdirectory,
  * and deny its inode. Recurses into nested cgroups. */
 static int deny_tree_recursive(struct police *p, const char *path, int depth)

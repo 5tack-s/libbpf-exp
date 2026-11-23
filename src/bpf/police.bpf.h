@@ -8,7 +8,6 @@ enum police_reason {
     REASON_NONE = 0,
     REASON_CGROUP = 1,
     REASON_INODE = 2,
-    REASON_PID = 3,
 };
 
 struct police_event {

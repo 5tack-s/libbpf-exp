@@ -63,12 +63,6 @@ MAX_RECENT = 100
 denied_cgroups: list = []  # list of {"path": str, "inode": Optional[int]}
 denied_lock = asyncio.Lock()
 
-# Currently denied PIDs, tracked from /v1/pid/deny and /v1/pid/allow
-# commands. Unlike cgroup-based denial, this works without writing to
-# cgroup.procs (broken under WSL2).
-denied_pids: list = []  # list of int
-denied_pids_lock = asyncio.Lock()
-
 # The active UNIX-socket connection from the eBPF auditor (client side).
 # The middleman is the server; it accepts the auditor's connection and can
 # send command JSON back down the same socket.
@@ -133,7 +127,6 @@ def _persist_denied():
     """Atomically write the denied list to disk."""
     data = {
         "cgroups": denied_cgroups,
-        "pids": denied_pids,
     }
     tmp = DENIED_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -143,7 +136,7 @@ def _persist_denied():
 
 def _load_denied():
     """Load the persisted deny list from disk, if any."""
-    global denied_cgroups, denied_pids
+    global denied_cgroups
     if not os.path.exists(DENIED_FILE):
         return
     try:
@@ -152,8 +145,6 @@ def _load_denied():
         if isinstance(data, dict):
             if isinstance(data.get("cgroups"), list):
                 denied_cgroups = data["cgroups"]
-            if isinstance(data.get("pids"), list):
-                denied_pids = [int(x) for x in data["pids"]]
     except (json.JSONDecodeError, OSError) as exc:
         log.warning("could not load persisted deny list: %s", exc)
 
@@ -356,7 +347,7 @@ async def lifespan(app: FastAPI):
     # Load persisted deny list so the frontend can show currently denied
     # cgroups/inodes across restarts.
     _load_denied()
-    log.info("loaded deny list: %d cgroups, %d pids", len(denied_cgroups), len(denied_pids))
+    log.info("loaded deny list: %d cgroups", len(denied_cgroups))
 
     # Capture the running (uvicorn) event loop. The UNIX socket reader runs
     # in a background thread, but every broadcast is scheduled on this loop
@@ -682,85 +673,7 @@ async def denied():
         return {
             "status": "ok",
             "cgroups": list(denied_cgroups),
-            "pids": list(denied_pids),
         }
-
-
-class PidRequest(BaseModel):
-    pid: int
-
-
-@app.post("/v1/pid/deny")
-async def pid_deny(req: PidRequest):
-    """Deny a PID by adding it to the BPF denied_pids map.
-
-    Unlike cgroup-based denial, this works without writing to cgroup.procs
-    (broken under WSL2). The auditor receives a deny_pid command over the
-    UNIX socket and adds the PID to its denied_pids BPF map.
-    """
-    pid = req.pid
-    if pid <= 0:
-        return {"status": "error", "message": "PID must be a positive integer"}
-
-    payload = {"action": "deny_pid", "pid": pid}
-    text = json.dumps(payload)
-
-    with auditor_conn_lock:
-        conn = auditor_conn[0]
-
-    if conn is None:
-        return {"status": "error", "message": "auditor not connected"}
-
-    try:
-        conn.sendall((text + "\n").encode("utf-8"))
-    except (OSError, BrokenPipeError, ConnectionError) as exc:
-        return {"status": "error", "message": str(exc)}
-
-    async with denied_pids_lock:
-        if pid not in denied_pids:
-            denied_pids.append(pid)
-        _persist_denied()
-
-    await broadcast(json.dumps({
-        "type": "CMD_SENT",
-        "action": "deny_pid",
-        "payload": payload,
-    }))
-    return {"status": "ok", "sent": text}
-
-
-@app.post("/v1/pid/allow")
-async def pid_allow(req: PidRequest):
-    """Allow a PID by removing it from the BPF denied_pids map."""
-    pid = req.pid
-    if pid <= 0:
-        return {"status": "error", "message": "PID must be a positive integer"}
-
-    payload = {"action": "allow_pid", "pid": pid}
-    text = json.dumps(payload)
-
-    with auditor_conn_lock:
-        conn = auditor_conn[0]
-
-    if conn is None:
-        return {"status": "error", "message": "auditor not connected"}
-
-    try:
-        conn.sendall((text + "\n").encode("utf-8"))
-    except (OSError, BrokenPipeError, ConnectionError) as exc:
-        return {"status": "error", "message": str(exc)}
-
-    async with denied_pids_lock:
-        if pid in denied_pids:
-            denied_pids.remove(pid)
-        _persist_denied()
-
-    await broadcast(json.dumps({
-        "type": "CMD_SENT",
-        "action": "allow_pid",
-        "payload": payload,
-    }))
-    return {"status": "ok", "sent": text}
 
 
 @app.get("/v1/debug/auditor_conn")

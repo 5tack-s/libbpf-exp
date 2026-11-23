@@ -21,16 +21,6 @@ struct {
     __type(value, u8);
 } denied_inodes SEC(".maps");
 
-/* PID deny list — userspace populates this with PIDs that should be
- * blocked from bpf() syscalls. Unlike cgroup-based denial, this works
- * without writing to cgroup.procs (which is broken under WSL2). */
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 4096);
-    __type(key, u32);
-    __type(value, u8);
-} denied_pids SEC(".maps");
-
 /* config[0]: 0 = enforce (deny), 1 = audit-only (log but allow) */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -100,29 +90,6 @@ int BPF_PROG(police_bpf, int cmd, union bpf_attr *attr, unsigned int size, bool 
         if (!audit_only || !*audit_only)
             return -EPERM;
         return 0;
-    }
-
-    /* --- PID deny list --- */
-    /* Userspace populates denied_pids with individual PIDs. This works
-     * without touching cgroup.procs, so it is reliable under WSL2 where
-     * cgroup.procs writes can fail with EBUSY. */
-    {
-        u32 pid = bpf_get_current_pid_tgid() >> 32;
-        if (bpf_map_lookup_elem(&denied_pids, &pid)) {
-            e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-            if (e) {
-                e->cgid = cgid;
-                e->inode = cgid;
-                e->pid = pid;
-                e->cmd = cmd;
-                e->reason = REASON_PID;
-                bpf_get_current_comm(&e->comm, sizeof(e->comm));
-                bpf_ringbuf_submit(e, 0);
-            }
-            if (!audit_only || !*audit_only)
-                return -EPERM;
-            return 0;
-        }
     }
 
     return 0;
